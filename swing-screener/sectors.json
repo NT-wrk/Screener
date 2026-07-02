@@ -1,0 +1,189 @@
+{
+  "Technology / Mega Caps": {
+    "core": {
+      "XLK": "Technology Sector ETF",
+      "NVDA": "Nvidia",
+      "AMD": "AMD",
+      "PLTR": "Palantir",
+      "GOOGL": "Alphabet",
+      "MSFT": "Microsoft"
+    },
+    "extended": {
+      "AAPL": "Apple",
+      "META": "Meta Platforms",
+      "AVGO": "Broadcom"
+    }
+  },
+  "Halbleiter / Chip-Equipment": {
+    "core": {
+      "TSM": "TSMC",
+      "MU": "Micron Technology",
+      "AMAT": "Applied Materials",
+      "ASML": "ASML"
+    },
+    "extended": {
+      "WOLF": "Wolfspeed",
+      "TSEM": "Tower Semiconductor",
+      "XFAB.PA": "X-FAB Silicon Foundries",
+      "SOI.PA": "Soitec",
+      "VECO": "Veeco Instruments",
+      "PLAB": "Photronics",
+      "COHU": "Cohu",
+      "ASYS": "Amtech Systems",
+      "AEHR": "Aehr Test Systems",
+      "SNDK": "SanDisk",
+      "285A.T": "Kioxia",
+      "PENG": "Penguin Solutions",
+      "MRAM": "Everspin Technologies"
+    }
+  },
+  "KI-Infrastruktur / Datacenter": {
+    "core": {
+      "CRWV": "CoreWeave",
+      "NBIS": "Nebius",
+      "IREN": "IREN",
+      "VRT": "Vertiv"
+    },
+    "extended": {
+      "KEEL": "Keel Infrastructure",
+      "FLEX": "Flex",
+      "INOD": "Innodata",
+      "OVH.PA": "OVHcloud",
+      "APLD": "Applied Digital",
+      "WULF": "TeraWulf",
+      "CLSK": "CleanSpark",
+      "HIVE": "Hive Digital",
+      "DGXX": "Digi Power X",
+      "SHT-B.ST": "SHT Smart High Tech"
+    }
+  },
+  "Photonics / Optik": {
+    "core": {
+      "AAOI": "Applied Optoelectronics",
+      "LITE": "Lumentum",
+      "COHR": "Coherent",
+      "IPGP": "IPG Photonics",
+      "FN": "Fabrinet"
+    },
+    "extended": {
+      "SIVE.ST": "Sivers Semiconductors",
+      "LPK.DE": "LPKF Laser & Electronics",
+      "POET": "POET Technologies",
+      "LASR": "nLIGHT",
+      "MKSI": "MKS Instruments",
+      "AXTI": "AXT",
+      "ALRIB.PA": "Riber",
+      "P4O.DE": "Plan Optik"
+    }
+  },
+  "Atomenergie / Uran": {
+    "core": {
+      "OKLO": "Oklo",
+      "SMR": "NuScale Power",
+      "CCJ": "Cameco",
+      "CEG": "Constellation Energy"
+    },
+    "extended": {
+      "LEU": "Centrus Energy",
+      "NNE": "Nano Nuclear Energy",
+      "BWXT": "BWX Technologies",
+      "UEC": "Uranium Energy",
+      "DNN": "Denison Mines",
+      "LTBR": "Lightbridge",
+      "ASPI": "ASP Isotopes"
+    }
+  },
+  "Energie-Infrastruktur / Strom": {
+    "core": {
+      "BE": "Bloom Energy",
+      "ENS": "EnerSys",
+      "VRT": "Vertiv",
+      "GEV": "GE Vernova"
+    },
+    "extended": {
+      "POWL": "Powell Industries",
+      "FLNC": "Fluence Energy",
+      "EOSE": "Eos Energy",
+      "AMSC": "American Superconductor",
+      "PLUG": "Plug Power",
+      "TE": "T1 Energy"
+    }
+  },
+  "Energy / Öl & Gas": {
+    "core": {
+      "XLE": "Energy Sector ETF",
+      "CVX": "Chevron",
+      "XOM": "ExxonMobil",
+      "COP": "ConocoPhillips"
+    },
+    "extended": {
+      "SLB": "Schlumberger",
+      "OXY": "Occidental Petroleum",
+      "DVN": "Devon Energy"
+    }
+  },
+  "Financials": {
+    "core": {
+      "XLF": "Financials Sector ETF",
+      "JPM": "JPMorgan Chase",
+      "BAC": "Bank of America",
+      "GS": "Goldman Sachs"
+    },
+    "extended": {
+      "MS": "Morgan Stanley",
+      "C": "Citigroup",
+      "WFC": "Wells Fargo",
+      "SOFI": "SoFi Technologies",
+      "HOOD": "Robinhood"
+    }
+  },
+  "Healthcare / Biotech": {
+    "core": {
+      "XLV": "Healthcare Sector ETF",
+      "NVO": "Novo Nordisk",
+      "LLY": "Eli Lilly",
+      "MRK": "Merck",
+      "HIMS": "Hims & Hers",
+      "UNH": "UnitedHealth"
+    },
+    "extended": {
+      "IBRX": "ImmunityBio",
+      "VANI": "Vivani Medical",
+      "TEM": "Tempus AI",
+      "RXRX": "Recursion Pharmaceuticals",
+      "CRSP": "CRISPR Therapeutics"
+    }
+  },
+  "Space / Drohnen": {
+    "core": {
+      "RKLB": "Rocket Lab",
+      "PL": "Planet Labs"
+    },
+    "extended": {
+      "ONDS": "Ondas",
+      "LUNR": "Intuitive Machines",
+      "ASTS": "AST SpaceMobile",
+      "RDW": "Redwire"
+    }
+  },
+  "Quantum Computing": {
+    "core": {
+      "IONQ": "IonQ",
+      "RGTI": "Rigetti Computing",
+      "QBTS": "D-Wave Quantum"
+    },
+    "extended": {
+      "QUBT": "Quantum Computing Inc",
+      "ARQQ": "Arqit Quantum"
+    }
+  },
+  "Kritische Materialien": {
+    "core": {
+      "MP": "MP Materials",
+      "VNP.TO": "5N Plus"
+    },
+    "extended": {
+      "SRL.AX": "Sunrise Energy Metals"
+    }
+  }
+}
