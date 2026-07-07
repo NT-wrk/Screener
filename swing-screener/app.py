@@ -239,22 +239,31 @@ def compute_setup(df: pd.DataFrame, m: dict) -> dict:
     sma10 = c.rolling(10).mean()
     sma20 = c.rolling(20).mean()
     trend_ok = m["Trend 10/30"] > 0 and m["Score"] >= 10
-    below_sma20 = last < float(sma20.iloc[-1])
 
-    # Pullback: SMA10 in den letzten 3 Tagen berührt, heute darüber geschlossen
+    # Pullback: SMA10 in den letzten 3 Tagen berührt, heute darüber geschlossen —
+    # aber max. 1 ATR über der SMA10 (sonst "extended", kein frisches Signal)
+    s10 = float(sma10.iloc[-1])
     touched = bool((l.tail(3) <= sma10.tail(3)).any())
-    reclaimed = last > float(sma10.iloc[-1]) and last > float(o.iloc[-1])
-    pullback = trend_ok and touched and reclaimed and m["RSI"] < 70
+    reclaimed = last > s10 and last > float(o.iloc[-1])
+    not_extended = last <= s10 + atr
+    pullback = trend_ok and touched and reclaimed and m["RSI"] < 70 and not_extended
 
-    # Breakout: Schluss über dem 20-Tage-Hoch (ohne heute) mit Volumen
+    # Breakout: Schluss über dem 20-Tage-Hoch (ohne heute) mit Volumen —
+    # aber max. 1 ATR darüber (frischer Ausbruch, kein Hinterherlaufen)
     high20 = float(h.iloc[-21:-1].max())
     relvol = m["Rel. Volumen"] if not math.isnan(m["Rel. Volumen"]) else 0
-    breakout = trend_ok and last > high20 and relvol > 1.2
+    breakout = trend_ok and high20 < last <= high20 + atr and relvol > 1.2
+
+    # Exit nur bestätigt: 2. Schluss unter SMA20 ODER klar (0,5 ATR) darunter —
+    # verhindert Exit-Signale auf den ersten Wackler
+    s20, s20_prev = float(sma20.iloc[-1]), float(sma20.iloc[-2])
+    c_prev = float(c.iloc[-2])
+    exit_conf = last < s20 and (c_prev < s20_prev or last < s20 - 0.5 * atr)
 
     if m["Score"] <= -10:
         setup = "⚫ Abwärtstrend — meiden"
-    elif m["Trend 10/30"] > 0 and below_sma20:
-        setup = "🔴 Exit — Schluss unter SMA20"
+    elif m["Trend 10/30"] > 0 and exit_conf:
+        setup = "🔴 Exit — Bruch der SMA20 bestätigt"
     elif breakout:
         setup = "🟢 Kauf: Breakout"
     elif pullback:
@@ -264,7 +273,7 @@ def compute_setup(df: pd.DataFrame, m: dict) -> dict:
     else:
         setup = "⚪ kein Setup"
 
-    stop = ziel = risiko = float("nan")
+    stop = ziel = ziel_struktur = risiko = signal_seit = float("nan")
     if setup.startswith("🟢"):
         swing_low = float(l.tail(5).min())
         stop = max(swing_low, last - 2 * atr)  # der engere der beiden Stops
@@ -272,10 +281,140 @@ def compute_setup(df: pd.DataFrame, m: dict) -> dict:
             stop = last - 1.5 * atr
         risk = last - stop
         ziel = last + 2 * risk               # Ziel bei Chance/Risiko = 2:1
+        ziel_struktur = float(h.tail(40).max())   # letztes Swing-Hoch als Alternativziel
         risiko = risk / last
 
-    return {"Setup": setup, "Stop": stop, "Ziel (2R)": ziel, "Risiko": risiko,
-            "ATR": atr}
+        # Wie frisch ist das Signal? 1 = heute neu, 8 = feuert schon länger
+        recent_buy = signal_series(df)["buy"].tail(10).to_numpy()
+        fired = np.flatnonzero(recent_buy)
+        signal_seit = int(len(recent_buy) - fired[0]) if len(fired) else 1
+
+    return {"Setup": setup, "Stop": stop, "Ziel (2R)": ziel,
+            "Ziel (Struktur)": ziel_struktur, "Signal seit": signal_seit,
+            "Risiko": risiko, "ATR": atr}
+
+
+# ----------------------------------------------------------------------------
+# OTE-Setup: Weekly/Daily-Trend -> Fibonacci-Pullback -> 4H-Bestätigung
+# ----------------------------------------------------------------------------
+OTE_HI, OTE_LO, OTE_SWEET = 0.62, 0.79, 0.705   # Retracement-Zone
+
+
+def weekly_trend_ok(df: pd.DataFrame) -> bool:
+    w = df["Close"].resample("W-FRI").last().dropna()
+    if len(w) < 25:
+        return False
+    sma = w.rolling(20).mean()
+    return bool(w.iloc[-1] > sma.iloc[-1] and sma.iloc[-1] > sma.iloc[-5])
+
+
+def daily_trend_ok(df: pd.DataFrame) -> bool:
+    c = df["Close"]
+    if len(c) < 60:
+        return False
+    sma20 = float(c.rolling(20).mean().iloc[-1])
+    sma50 = float(c.rolling(50).mean().iloc[-1])
+    return bool(float(c.iloc[-1]) > sma50 and sma20 > sma50)
+
+
+def daily_atr(df: pd.DataFrame) -> float:
+    c, h, l = df["Close"], df["High"], df["Low"]
+    prev_c = c.shift(1)
+    tr = pd.concat([h - l, (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
+    return float(tr.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1])
+
+
+def last_impulse(df: pd.DataFrame, lookback: int = 60):
+    """Letzter Aufwärts-Impuls: Swing-Tief L -> Swing-Hoch H (Fib-Basis)."""
+    n = len(df)
+    lb = min(lookback, n - 10)
+    if lb < 15:
+        return None
+    h = df["High"].to_numpy()
+    l = df["Low"].to_numpy()
+    ih = n - lb + int(h[n - lb:].argmax())
+    start = max(0, ih - 60)
+    if ih - start < 5:
+        return None
+    il = start + int(l[start:ih].argmin())
+    H, L = float(h[ih]), float(l[il])
+    if H <= L:
+        return None
+    return H, L
+
+
+def nearest_support(df: pd.DataFrame, price: float, k: int = 3) -> float:
+    """Nächstes Pivot-Tief unterhalb des Kurses (letzte ~120 Tage)."""
+    l = df["Low"].tail(120).to_numpy()
+    pivots = [float(l[i]) for i in range(k, len(l) - k)
+              if l[i] == l[i - k:i + k + 1].min()]
+    below = [p for p in pivots if p < price]
+    return max(below) if below else float("nan")
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_4h(tickers: tuple) -> dict:
+    """4H-Kerzen aus Stundendaten (letzte 60 Tage)."""
+    if not tickers:
+        return {}
+    raw = yf.download(list(tickers), period="60d", interval="1h",
+                      auto_adjust=True, group_by="ticker",
+                      threads=True, progress=False)
+    out = {}
+    if raw is None or raw.empty:
+        return out
+    for t in tickers:
+        try:
+            df = raw[t] if isinstance(raw.columns, pd.MultiIndex) else raw
+            df = df.dropna(subset=["Close"])
+            if df.empty:
+                continue
+            df4 = df.resample("4h").agg({"Open": "first", "High": "max",
+                                         "Low": "min", "Close": "last"}).dropna()
+            if len(df4) >= 10:
+                out[t] = df4
+        except (KeyError, TypeError):
+            continue
+    return out
+
+
+def confirm_4h(df4: pd.DataFrame) -> bool:
+    """Struktur-Bruch nach oben: 4H-Schluss über den Hochs der letzten 6 Kerzen."""
+    return bool(float(df4["Close"].iloc[-1]) > float(df4["High"].iloc[-7:-1].max()))
+
+
+def ote_row(t: str, name: str, sektor: str, df: pd.DataFrame):
+    """Prüft das Tutorial-Setup. None = Trendfilter nicht bestanden / kein Impuls."""
+    if not (weekly_trend_ok(df) and daily_trend_ok(df)):
+        return None
+    imp = last_impulse(df)
+    if imp is None:
+        return None
+    H, L = imp
+    atr = daily_atr(df)
+    if H - L < 3 * atr:          # Impuls zu klein, Fib-Zone nicht belastbar
+        return None
+    P = float(df["Close"].iloc[-1])
+    retr = (H - P) / (H - L)
+    if retr > 0.886:             # unter der letzten Fib-Marke: Setup invalidiert
+        return None
+
+    stop = L - 0.25 * atr
+    risk = P - stop
+    rr = (H - P) / risk if risk > 0 else float("nan")
+    support = nearest_support(df, P)
+
+    return {
+        "Ticker": t, "Name": name, "Sektor": sektor,
+        "Kurs": P, "Retracement": retr,
+        "OTE 0.62": H - OTE_HI * (H - L),
+        "OTE 0.705": H - OTE_SWEET * (H - L),
+        "OTE 0.79": H - OTE_LO * (H - L),
+        "Swing-Hoch (Ziel)": H, "Swing-Tief": L,
+        "Stop": stop, "R:R zum Hoch": rr,
+        "Support": support,
+        "ATR%": atr / P,
+    }
 
 
 # ----------------------------------------------------------------------------
@@ -327,19 +466,23 @@ def signal_series(df: pd.DataFrame) -> dict:
 
     trend_ok = (trend > 0) & (score >= 10)
     touched = (l <= sma10).rolling(3).max() >= 1
-    pullback = trend_ok & touched & (c > sma10) & (c > o) & (rsi < 70)
+    pullback = (trend_ok & touched & (c > sma10) & (c > o) & (rsi < 70)
+                & (c <= sma10 + atr))                       # Extended-Filter
     high20 = h.shift(1).rolling(20).max()
-    breakout = trend_ok & (c > high20) & (relvol > 1.2)
+    breakout = trend_ok & (c > high20) & (c <= high20 + atr) & (relvol > 1.2)
+    buy = (pullback | breakout).fillna(False)
 
     return {"pullback": pullback.fillna(False), "breakout": breakout.fillna(False),
-            "sma20": sma20, "low5": l.rolling(5).min(), "atr": atr}
+            "buy": buy, "sma20": sma20, "low5": l.rolling(5).min(), "atr": atr}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def run_backtest(tickers: tuple, period: str, max_hold: int, rr: float = 2.0) -> pd.DataFrame:
+def run_backtest(tickers: tuple, period: str, max_hold: int, rr: float = 2.0,
+                 exit_mode: str = "Fixes 2R-Ziel") -> pd.DataFrame:
     """Simuliert alle historischen Kauf-Signale. Einstieg am Folgetag zur
-    Eröffnung; Exit über Stop, Ziel (rr·Risiko), SMA20-Bruch oder Zeit-Exit.
-    Bei Stop und Ziel am selben Tag zählt konservativ der Stop."""
+    Eröffnung. Exit-Strategien: fixes 2R-Ziel, Struktur-Ziel (letztes Hoch)
+    oder Trailing-Stop 3×ATR ohne Ziel. Bei Stop und Ziel am selben Tag
+    zählt konservativ der Stop."""
     history = load_history(tickers, period)
     trades = []
 
@@ -368,23 +511,45 @@ def run_backtest(tickers: tuple, period: str, max_hold: int, rr: float = 2.0) ->
             risk = entry - stop
             if not (risk > 0) or math.isnan(risk):
                 continue
-            target = entry + rr * risk
+
+            if exit_mode == "Struktur-Ziel (letztes Hoch)":
+                target = float(np.nanmax(h[max(0, si - 40):si + 1]))
+                if not target > entry:
+                    target = entry + rr * risk
+            elif exit_mode == "Trailing 3×ATR (kein Ziel)":
+                target = None
+            else:
+                target = entry + rr * risk
 
             exit_i, exit_price, grund = None, None, None
             last_i = min(entry_i + max_hold - 1, len(df) - 1)
+            trail = stop
             for j in range(entry_i, last_i + 1):
-                if j > entry_i and o[j] <= stop:
-                    exit_i, exit_price, grund = j, o[j], "Gap-Stop"
-                elif j > entry_i and o[j] >= target:
-                    exit_i, exit_price, grund = j, o[j], "Gap-Ziel"
-                elif l[j] <= stop:
-                    exit_i, exit_price, grund = j, stop, "Stop"
-                elif h[j] >= target:
-                    exit_i, exit_price, grund = j, target, "Ziel"
-                elif c[j] < sma20[j]:
-                    exit_i, exit_price, grund = j, c[j], "SMA20-Exit"
-                if exit_i is not None:
-                    break
+                if target is None:                       # Trailing-Modus
+                    if j > entry_i and o[j] <= trail:
+                        exit_i, exit_price, grund = j, o[j], "Gap-Stop"
+                    elif l[j] <= trail:
+                        exit_i, exit_price, grund = j, trail, "Trailing-Stop"
+                    if exit_i is not None:
+                        break
+                    trail = max(trail, c[j] - 3 * atr[j])
+                else:                                    # Ziel-Modi
+                    # Exit unter SMA20 nur bestätigt (2. Tag oder 0,5 ATR darunter)
+                    sma_break = (c[j] < sma20[j]
+                                 and (c[j - 1] < sma20[j - 1]
+                                      or c[j] < sma20[j] - 0.5 * atr[si]))
+                    if j > entry_i and o[j] <= stop:
+                        exit_i, exit_price, grund = j, o[j], "Gap-Stop"
+                    elif j > entry_i and o[j] >= target:
+                        exit_i, exit_price, grund = j, o[j], "Gap-Ziel"
+                    elif l[j] <= stop:
+                        exit_i, exit_price, grund = j, stop, "Stop"
+                    elif h[j] >= target:
+                        exit_i, exit_price, grund = j, target, "Ziel"
+                    elif sma_break:
+                        exit_i, exit_price, grund = j, c[j], "SMA20-Exit"
+                    if exit_i is not None:
+                        break
             if exit_i is None:
                 exit_i, exit_price, grund = last_i, c[last_i], "Zeit-Exit"
 
@@ -413,6 +578,34 @@ def ampel(score: float) -> str:
     if score >= -10:
         return "⚪ neutral"
     return "🔴 schwach"
+
+
+def score_dot(score: float) -> str:
+    return ampel(score).split()[0]
+
+
+def score_bg(score: float) -> str:
+    """CSS-Hintergrund für Tabellenzeilen nach Score-Ampel."""
+    if score >= 30:
+        return "background-color: rgba(38,166,154,0.30)"
+    if score >= 10:
+        return "background-color: rgba(255,193,7,0.20)"
+    if score >= -10:
+        return ""
+    return "background-color: rgba(239,83,80,0.25)"
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def all_sector_scores(sectors: dict) -> dict:
+    """Sektor-Scores (Ø der Kern-Ticker) für Sidebar-Ampel und Übersicht."""
+    all_core = tuple(sorted({t for s in sectors.values() for t in s["core"]}))
+    history = load_history(all_core)
+    out = {}
+    for name, cfg in sectors.items():
+        scores = [compute_metrics(history[t])["Score"] for t in cfg["core"] if t in history]
+        if scores:
+            out[name] = sum(scores) / len(scores)
+    return out
 
 
 def build_table(tickers: dict, history: dict, gruppe: str) -> list:
@@ -480,11 +673,12 @@ PCT_COLS = ["Trend 10/30", "Ø Intraday 10T", "Ø Intraday 30T", "Ø Overnight 1
             "Ø Overnight 30T", "Ø Tag 10T", "Ø Tag 30T", "Abstand 52W-Hoch",
             "Risiko"]
 PRICE_COLS = ["Kurs", "Ø Open 10T", "Ø Close 10T", "Ø Open 30T", "Ø Close 30T",
-              "SMA20", "SMA50", "Stop", "Ziel (2R)", "ATR"]
+              "SMA20", "SMA50", "Stop", "Ziel (2R)", "Ziel (Struktur)", "ATR"]
 EUR_COLS = ["Kurs €", "Stop €", "Ziel €"]
 FRONT_COLS = ["Ticker", "Name", "Sektor", "Sektor-Score", "Gruppe", "Setup",
-              "Kurs", "Währung", "Kurs €", "Score", "Signal", "Stop",
-              "Ziel (2R)", "Stop €", "Ziel €", "Risiko"]
+              "Signal seit", "Kurs", "Währung", "Kurs €", "Score", "Signal",
+              "Stop", "Ziel (2R)", "Ziel (Struktur)", "Stop €", "Ziel €",
+              "Risiko"]
 
 
 def show_table(rows: list, key: str):
@@ -508,11 +702,12 @@ def show_table(rows: list, key: str):
 sectors = load_sectors()
 OVERVIEW = "📊 Sektor-Übersicht"
 SCANNER = "🎯 Setup-Scanner"
+OTE = "📐 OTE-Screener"
 BACKTEST = "🧪 Backtest"
 
 if "nav" not in st.session_state:
     st.session_state.nav = OVERVIEW
-if st.session_state.nav not in (OVERVIEW, SCANNER, BACKTEST) and st.session_state.nav not in sectors:
+if st.session_state.nav not in (OVERVIEW, SCANNER, OTE, BACKTEST) and st.session_state.nav not in sectors:
     st.session_state.nav = OVERVIEW
 
 
@@ -530,7 +725,17 @@ def delete_sector(name: str) -> None:
 
 with st.sidebar:
     st.title("📈 Swing-Screener")
-    st.radio("Ansicht", [OVERVIEW, SCANNER, BACKTEST] + list(sectors.keys()), key="nav")
+    with st.spinner("Lade Sektor-Ampel…"):
+        sec_scores = all_sector_scores(sectors)
+
+    def nav_label(opt: str) -> str:
+        if opt in (OVERVIEW, SCANNER, OTE, BACKTEST):
+            return opt
+        s = sec_scores.get(opt)
+        return f"{score_dot(s)} {opt}" if s is not None else opt
+
+    st.radio("Ansicht", [OVERVIEW, SCANNER, OTE, BACKTEST] + list(sectors.keys()),
+             key="nav", format_func=nav_label)
     st.divider()
     with st.expander("➕ Neuen Sektor anlegen"):
         with st.form("new_sector", clear_on_submit=True):
@@ -584,11 +789,14 @@ if nav == OVERVIEW:
 
     if overview_rows:
         odf = pd.DataFrame(overview_rows).sort_values("Score", ascending=False)
+        styled = odf.style.apply(
+            lambda row: [score_bg(row["Score"])] * len(row), axis=1)
         st.dataframe(
-            odf, hide_index=True, use_container_width=True,
+            styled, hide_index=True, use_container_width=True,
             column_config={
-                c: st.column_config.NumberColumn(c, format="percent", step=0.0001)
-                for c in ["Ø Trend 10/30", "Ø Intraday 10T", "Ø Overnight 10T"]
+                "Score": st.column_config.NumberColumn("Score", format="%.1f"),
+                **{c: st.column_config.NumberColumn(c, format="percent", step=0.0001)
+                   for c in ["Ø Trend 10/30", "Ø Intraday 10T", "Ø Overnight 10T"]},
             },
         )
         st.subheader("Drill-Down")
@@ -613,7 +821,15 @@ Alle Signale gelten nur **in Trendrichtung** (Momentum-Score ≥ 10 und 10T-Schn
 - **🔴 Exit** — Trend war aufwärts, aber Schlusskurs unter der SMA20. Wer drin ist,
   sollte die Position überprüfen.
 - **Stop** = letztes 5-Tage-Tief bzw. 2×ATR unter dem Kurs (der engere der beiden).
-  **Ziel (2R)** = Einstieg + 2× Risiko, d.h. Chance/Risiko 2:1.
+  **Ziel (2R)** = Einstieg + 2× Risiko; **Ziel (Struktur)** = letztes Swing-Hoch.
+- **Extended-Filter:** Kauf-Signale feuern nur, wenn der Kurs max. 1 ATR über der
+  SMA10 (Pullback) bzw. dem Ausbruchslevel (Breakout) liegt — kein Hinterherlaufen.
+- **Signal seit:** 1 = heute neu. Höhere Werte = das Signal feuert schon länger,
+  der Einstieg ist entsprechend schlechter.
+
+⚠️ **Signale basieren auf der laufenden Tageskerze** und können sich bis
+Handelsschluss (22:00 MEZ bei US-Werten) noch ändern. Verbindlich ist der Stand
+nach Börsenschluss.
 
 Ein Signal ist ein **Kandidat, kein Auftrag** — Chart ansehen, News prüfen, Positionsgröße
 über das Risiko steuern (z.B. max. 1 % des Depots pro Trade riskieren).
@@ -680,6 +896,135 @@ Ein Signal ist ein **Kandidat, kein Auftrag** — Chart ansehen, News prüfen, P
         st.info("Aktuell keine aktiven Kauf- oder Exit-Signale. "
                 "Schalte die Beobachten-Liste ein, um Kandidaten zu sehen.")
 
+# ============================ OTE-Screener ============================
+elif nav == OTE:
+    st.header("OTE-Screener — Trend folgen, Rücklauf kaufen, 4H-Bestätigung")
+    with st.expander("ℹ️ Die 5 Tutorial-Regeln und ihre Umsetzung"):
+        st.markdown(f"""
+1. **Higher-Timeframe-Trend:** Weekly-Schluss über dem (steigenden) 20-Wochen-Schnitt
+   *und* Daily-Kurs über der SMA50 mit SMA20 > SMA50. Nur solche Aktien erscheinen hier.
+2. **Levels markieren, Preis kommen lassen:** Der letzte Aufwärts-Impuls
+   (Swing-Tief → Swing-Hoch) wird automatisch erkannt; dazu der nächste Support
+   (Pivot-Tief) unter dem Kurs.
+3. **4H-Bestätigung:** Ein 4H-Schluss über den Hochs der letzten sechs 4H-Kerzen
+   (= kleiner Strukturbruch nach oben) gilt als Bestätigung.
+4. **OTE statt „extended":** Der Kurs muss {OTE_HI:.0%}–{OTE_LO:.0%} des Impulses
+   zurückgelaufen sein (Sweet Spot {OTE_SWEET:.1%}). Aktien nahe am Hoch werden
+   als „Rücklauf abwarten" geführt — dort ist Geduld die Regel.
+5. **Kleines Risiko:** Stop unter dem Swing-Tief (−¼ ATR Puffer), Ziel = altes Hoch,
+   R:R wird angezeigt. Faustregel: nur Setups mit R:R ≥ 1,5 handeln, fixen
+   Depotanteil (z.B. 1 %) pro Trade riskieren.
+
+Läuft der Kurs unter das 88,6 %-Retracement, gilt das Setup als invalidiert
+und fliegt aus der Liste.
+""")
+
+    scope = st.selectbox("Universum", ["Alle Sektoren"] + list(sectors.keys()), key="ote_scope")
+    ote_tickers, ote_sector, ote_name = {}, {}, {}
+    for sec_name, sec_cfg in sectors.items():
+        if scope != "Alle Sektoren" and sec_name != scope:
+            continue
+        for grp in ("core", "extended"):
+            for t, name in sec_cfg[grp].items():
+                if t not in ote_tickers:
+                    ote_tickers[t] = name
+                    ote_sector[t] = sec_name
+                    ote_name[t] = name
+
+    with st.spinner(f"Prüfe {len(ote_tickers)} Ticker (Weekly/Daily-Trend, Fib-Zonen)…"):
+        history = load_history(tuple(sorted(ote_tickers)))
+        rows = []
+        for t in ote_tickers:
+            if t not in history:
+                continue
+            r = ote_row(t, ote_name[t], ote_sector[t], history[t])
+            if r is not None:
+                rows.append(r)
+
+    # 4H-Daten nur für Kandidaten in oder nahe der Zone laden
+    zone_tickers = tuple(sorted(r["Ticker"] for r in rows if r["Retracement"] >= 0.5))
+    with st.spinner(f"Hole 4H-Daten für {len(zone_tickers)} Zonen-Kandidaten…"):
+        h4 = load_4h(zone_tickers)
+
+    for r in rows:
+        retr = r["Retracement"]
+        conf = confirm_4h(h4[r["Ticker"]]) if r["Ticker"] in h4 else None
+        r["4H bestätigt"] = {True: "✅ ja", False: "⏳ nein", None: "—"}[conf]
+        if OTE_HI <= retr <= OTE_LO and conf:
+            r["Status"] = "🟢 ENTRY — OTE + 4H bestätigt"
+        elif OTE_HI <= retr <= OTE_LO:
+            r["Status"] = "🟠 im OTE — auf 4H-Bestätigung warten"
+        elif 0.5 <= retr < OTE_HI:
+            r["Status"] = "🟡 nähert sich der OTE-Zone"
+        elif retr > OTE_LO:
+            r["Status"] = "⚠️ tief im Retracement — nur mit Bestätigung"
+        else:
+            r["Status"] = "⏳ Rücklauf abwarten (Preis kommen lassen)"
+
+    order = {"🟢": 0, "🟠": 1, "⚠️": 2, "🟡": 3, "⏳": 4}
+    rows.sort(key=lambda r: (order.get(r["Status"][0], 9), -r["R:R zum Hoch"]))
+
+    n_entry = sum(r["Status"].startswith("🟢") for r in rows)
+    n_ote = sum(r["Status"].startswith("🟠") for r in rows)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Trendfilter bestanden", len(rows))
+    c2.metric("🟢 Entry-Signale", n_entry)
+    c3.metric("🟠 im OTE (warten auf 4H)", n_ote)
+    c4.metric("🟡/⏳ Geduld", len(rows) - n_entry - n_ote)
+
+    show_wait = st.toggle("⏳ „Rücklauf abwarten“ mit anzeigen", value=False, key="ote_wait")
+    shown = [r for r in rows if show_wait or not r["Status"].startswith("⏳")]
+
+    if shown:
+        df_ote = pd.DataFrame(shown)
+        front = ["Ticker", "Name", "Sektor", "Status", "Kurs", "Retracement",
+                 "4H bestätigt", "OTE 0.62", "OTE 0.705", "OTE 0.79",
+                 "Stop", "Swing-Hoch (Ziel)", "R:R zum Hoch", "Support", "ATR%"]
+        df_ote = df_ote[front + [c for c in df_ote.columns if c not in front]]
+        st.dataframe(
+            df_ote, hide_index=True, use_container_width=True, key="tbl_ote",
+            column_config={
+                "Retracement": st.column_config.NumberColumn("Retracement", format="percent", step=0.001),
+                "ATR%": st.column_config.NumberColumn("ATR%", format="percent", step=0.001),
+                "R:R zum Hoch": st.column_config.NumberColumn("R:R zum Hoch", format="%.2f"),
+                **{c: st.column_config.NumberColumn(c, format="%.2f") for c in
+                   ["Kurs", "OTE 0.62", "OTE 0.705", "OTE 0.79", "Stop",
+                    "Swing-Hoch (Ziel)", "Swing-Tief", "Support"]},
+            },
+        )
+
+        st.subheader("Chart mit Fibonacci-Zone")
+        sel = st.selectbox(
+            "Ticker", list(df_ote["Ticker"]),
+            format_func=lambda t: f"{t} — {dict(zip(df_ote['Ticker'], df_ote['Name']))[t]}",
+            key="ote_chart",
+        )
+        r = df_ote[df_ote["Ticker"] == sel].iloc[0]
+        d = history[sel].tail(130)
+        fig = go.Figure(go.Candlestick(x=d.index, open=d["Open"], high=d["High"],
+                                       low=d["Low"], close=d["Close"], name=sel))
+        fig.add_hrect(y0=r["OTE 0.79"], y1=r["OTE 0.62"], fillcolor="#26a69a",
+                      opacity=0.15, line_width=0,
+                      annotation_text="OTE-Zone (62–79%)", annotation_position="top left")
+        fig.add_hline(y=r["Swing-Hoch (Ziel)"], line_dash="dash", line_color="#26a69a",
+                      annotation_text=f"Ziel (Hoch) {r['Swing-Hoch (Ziel)']:.2f}")
+        fig.add_hline(y=r["OTE 0.705"], line_dash="dot", line_color="#ffb300",
+                      annotation_text=f"Sweet Spot 70,5% = {r['OTE 0.705']:.2f}")
+        fig.add_hline(y=r["Swing-Tief"], line_dash="dot", line_color="#888",
+                      annotation_text=f"Swing-Tief {r['Swing-Tief']:.2f}")
+        fig.add_hline(y=r["Stop"], line_dash="dash", line_color="#ef5350",
+                      annotation_text=f"Stop {r['Stop']:.2f}")
+        if not math.isnan(r["Support"]):
+            fig.add_hline(y=r["Support"], line_dash="dot", line_color="#5c6bc0",
+                          annotation_text=f"Support {r['Support']:.2f}")
+        fig.update_layout(height=600, xaxis_rangeslider_visible=False,
+                          margin=dict(t=40, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Kein Wert im gewählten Universum hat den Weekly+Daily-Trendfilter "
+                "bestanden bzw. befindet sich nahe einer OTE-Zone. Schalte "
+                "„Rücklauf abwarten“ ein, um die Warteliste zu sehen.")
+
 # ============================ Backtest ============================
 elif nav == BACKTEST:
     st.header("Backtest — hätten die Signale funktioniert?")
@@ -703,10 +1048,12 @@ historischen Kurse. Für jedes Kauf-Signal wird ein Trade simuliert:
   Trades = die Regeln hätten eine Edge gehabt.
 """)
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     scope = c1.selectbox("Universum", ["Alle Sektoren"] + list(sectors.keys()))
     period_label = c2.selectbox("Zeitraum", ["2 Jahre", "3 Jahre", "5 Jahre"])
-    max_hold = c3.slider("Max. Haltedauer (Handelstage)", 10, 40, 25)
+    exit_mode = c3.selectbox("Exit-Strategie", [
+        "Fixes 2R-Ziel", "Struktur-Ziel (letztes Hoch)", "Trailing 3×ATR (kein Ziel)"])
+    max_hold = c4.slider("Max. Haltedauer (Handelstage)", 10, 60, 25)
     period = {"2 Jahre": "2y", "3 Jahre": "3y", "5 Jahre": "5y"}[period_label]
 
     ticker_sector = {}
@@ -720,8 +1067,9 @@ historischen Kurse. Für jedes Kauf-Signal wird ein Trade simuliert:
     if st.button("🧪 Backtest starten", type="primary"):
         with st.spinner(f"Simuliere Signale für {len(ticker_sector)} Ticker über {period_label}…"):
             st.session_state.bt_result = run_backtest(
-                tuple(sorted(ticker_sector)), period, max_hold)
-            st.session_state.bt_label = f"{scope} · {period_label} · max. {max_hold} Tage"
+                tuple(sorted(ticker_sector)), period, max_hold, exit_mode=exit_mode)
+            st.session_state.bt_label = (f"{scope} · {period_label} · "
+                                         f"max. {max_hold} Tage · {exit_mode}")
 
     trades = st.session_state.get("bt_result")
     if trades is None:
@@ -792,7 +1140,7 @@ historischen Kurse. Für jedes Kauf-Signal wird ein Trade simuliert:
 # ============================ Sektor-Detail ============================
 else:
     cfg = sectors[nav]
-    st.header(f"{nav} — Detailansicht")
+    st.header(f"{score_dot(sec_scores.get(nav, 0))} {nav} — Detailansicht")
 
     tickers = tuple(sorted(set(cfg["core"]) | set(cfg["extended"])))
     with st.spinner("Lade Kursdaten…"):

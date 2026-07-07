@@ -46,7 +46,15 @@ Overnight-Drift, je 10 % MACD, MA-Anordnung und relatives Volumen,
 15 % Nähe zum 52-Wochen-Hoch. Gewichte stehen in `compute_metrics()`
 in `app.py` und lassen sich dort leicht anpassen.
 
-Ampel: 🟢 ≥ 30 · 🟡 ≥ 10 · ⚪ ≥ −10 · 🔴 darunter
+Ampel: 🟢 ≥ 30 · 🟡 ≥ 10 · ⚪ ≥ −10 · 🔴 darunter — farblich hinterlegt in
+Sidebar und Übersichtstabelle.
+
+**Warum 10/30 Tage und nicht kürzer?** Im Backtest (2 Jahre, Trailing-Exit)
+wurden 5/20-, 7/21- und 10/30-Fenster verglichen: 10/30 lieferte das beste
+Ergebnis (Ø 1,10 R, PF 2,83) — kürzere Fenster erzeugen ~20 % mehr Trades,
+aber mit schlechterer Qualität (Ø 0,87–0,94 R). Der Einstiegs-Trigger ist
+ohnehin tagesaktuell (SMA10-Berührung, 20-Tage-Hoch); die 10/30-Fenster
+messen nur den Trend-Hintergrund, und der ist stabiler = besser.
 
 ## Kauf-/Exit-Signale (Setup-Scanner)
 
@@ -67,6 +75,47 @@ max. 1 % des Depots, also `Stückzahl = 1 % Depot / (Kurs − Stop)`.
 
 Der 🎯 Setup-Scanner (Sidebar) prüft alle Ticker aller Sektoren auf einmal
 und zeigt nur aktive Signale. Regeln stehen in `compute_setup()` in `app.py`.
+
+Wichtige Verfeinerungen (v2):
+
+- **Extended-Filter:** Kauf-Signale nur, wenn der Kurs max. 1 ATR über der
+  SMA10 (Pullback) bzw. dem Ausbruchslevel (Breakout) liegt — verhindert
+  Signale, nachdem der Trend schon gelaufen ist.
+- **Exit-Bestätigung:** Exit erst beim 2. Schluss unter der SMA20 oder wenn
+  der Kurs klar (0,5 ATR) darunter schließt — verhindert Whipsaw.
+- **Signal seit:** 1 = heute neu; höhere Zahl = Signal feuert schon länger,
+  Einstieg entsprechend schlechter.
+- **Zwei Ziele:** fixes 2R-Ziel und Struktur-Ziel (letztes Swing-Hoch).
+- Signale basieren auf der **laufenden Tageskerze** und sind erst nach
+  Börsenschluss endgültig.
+
+**Backtest-Vergleich der Exit-Strategien** (alle Sektoren, 2 Jahre,
+Survivorship-Bias beachten): Trailing-Stop 3×ATR ohne festes Ziel schlägt
+das fixe 2R-Ziel deutlich (Ø ~0,7–1,1 R vs. ~0,25 R pro Trade, Profitfaktor
+~2,2–2,8 vs. 1,5), weil Gewinner weiterlaufen dürfen. Das Struktur-Ziel
+trifft öfter (56 %), bringt aber am wenigsten. Im 🧪 Backtest ist die
+Exit-Strategie wählbar.
+
+## OTE-Screener (Trend → Fib-Pullback → 4H-Bestätigung)
+
+Die Ansicht 📐 setzt die klassische „Trade with the trend, buy the
+pullback"-Methode um:
+
+1. **Trendfilter:** Weekly-Schluss über steigendem 20-Wochen-Schnitt und
+   Daily über SMA50 (SMA20 > SMA50). Nur diese Aktien erscheinen.
+2. **Impuls-Erkennung:** letzter Aufwärts-Impuls (Swing-Tief → Swing-Hoch),
+   mindestens 3 ATR groß; dazu der nächste Pivot-Support unter dem Kurs.
+3. **OTE-Zone:** Rücklauf 62–79 % des Impulses (Sweet Spot 70,5 %).
+   Über 88,6 % gilt das Setup als invalidiert.
+4. **4H-Bestätigung:** 4H-Schluss über den Hochs der letzten sechs
+   4H-Kerzen (Strukturbruch nach oben).
+5. **Risiko:** Stop unter dem Swing-Tief (−¼ ATR), Ziel = altes Hoch,
+   R:R wird berechnet.
+
+Status-Stufen: ⏳ Rücklauf abwarten → 🟡 nähert sich → 🟠 im OTE (auf 4H
+warten) → 🟢 ENTRY. Der Chart zeigt die Fib-Zone, Sweet Spot, Stop, Ziel
+und Support. Dass oft **kein** Entry da ist, ist Absicht — Regel 5 des
+Tutorials: warten, nicht erzwingen.
 
 ## Backtest
 
